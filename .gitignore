@@ -1,0 +1,20 @@
+# Data (news titles and other content)
+newstitles/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# Virtual environment
+venv/
+.env/
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
