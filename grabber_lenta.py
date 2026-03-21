@@ -12,6 +12,7 @@ HEADERS = {
 }
 
 MAX_PAGES = 20
+PAUSE_BETWEEN_PAGES = 2
 
 import requests
 from bs4 import BeautifulSoup
@@ -73,7 +74,7 @@ def get_day_news(date):
         print(f"  страница {page}: {len(items)} новостей")
 
         page += 1
-        time.sleep(1)
+        time.sleep(2)
 
     return news
 
@@ -96,19 +97,20 @@ def collect_period(start_date, end_date):
             print(f"Ошибка на {current}: {e}")
 
         current += timedelta(days=1)
-        time.sleep(1)
+        time.sleep(PAUSE_BETWEEN_PAGES)
 
     return pd.DataFrame(all_news)
 
 
 if __name__ == "__main__":
-    start = datetime(2026, 3, 1)
-    end = datetime(2026, 3, 2)
+    start = datetime(2026, 1, 1)
+    end = datetime(2026, 3, 20)
 
     df = collect_period(start, end)
 
     df.drop_duplicates(subset="url", inplace=True)
 
     df.to_csv("newstitles/lenta_news.csv", index=False, encoding="utf-8-sig")
+    df.to_parquet("newstitles/lenta.parquet", index=False)
 
     print("Готово:", len(df))
