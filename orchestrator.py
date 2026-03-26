@@ -9,21 +9,20 @@ from parsers.lenta import get_day_news
 import hashlib
 
 STATS_PATH = "storage/meta/stats.parquet"
-
-from datetime import date, timedelta
+PAUSE_BETWEEN_PAGES = 2
 
 from datetime import date, timedelta
 
 # run parser for a source and a range of dates
-def run_lenta(start_date):
+def run_source(source, raw_func, start_date):
     stats = load_stats()
 
-    dates = get_dates_to_load(stats, "lenta", start_date)
+    dates = get_dates_to_load(stats, source, start_date)
 
-    print(f"К загрузке дат: {len(dates)}")
+    print(f"[{source}] К загрузке дат: {len(dates)}")
 
     for d in dates:
-        load_lenta_for_date(d)
+        load_for_date(source, raw_func, d)
 
 # Deterine which dates to load
 def get_dates_to_load(stats, source, start_date):
@@ -90,49 +89,54 @@ def update_stats(stats_df, source, date, status, count):
 
     return stats_df
 
-def make_id(row):
-    raw = f"{row['title'].strip().lower()}_{row['date']}_lenta"
-    return hashlib.sha1(raw.encode()).hexdigest()
+# moved to core/transform.py
+# def make_id(row):
+#     raw = f"{row['title'].strip().lower()}_{row['date']}_lenta"
+#     return hashlib.sha1(raw.encode()).hexdigest()
 
+# moved to core/transform.py
+# def fetch_lenta_for_date(date):
+#     news = get_day_news(date)
 
-def fetch_lenta_for_date(date):
-    news = get_day_news(date)
+#     df = pd.DataFrame(news)
 
-    df = pd.DataFrame(news)
+#     if df.empty:
+#         return df
 
-    if df.empty:
-        return df
+#     df = df[["date", "title", "url"]]
 
-    df = df[["date", "title", "url"]]
+#     # 👉 добавляем id
+#     df["id"] = df.apply(make_id, axis=1)
 
-    # 👉 добавляем id
-    df["id"] = df.apply(make_id, axis=1)
+#     # 👉 убираем дубли
+#     df = df.drop_duplicates(subset="id")
 
-    # 👉 убираем дубли
-    df = df.drop_duplicates(subset="id")
+#     return df
 
-    return df
+from core.transform import build_dataframe
+from parsers.lenta import get_day_news
 
-def load_lenta_for_date(date):
+def load_for_date(source, raw_func, date):
     stats = load_stats()
 
-    print(f"Загрузка {date.strftime('%Y-%m-%d')}")
+    print(f"[{source}] Загрузка {date.strftime('%Y-%m-%d')}")
 
     try:
-        df = fetch_lenta_for_date(date)
+        news = raw_func(date)
+        df = build_dataframe(news, source)
 
         if df.empty:
             print("Нет данных")
-            stats = update_stats(stats, "lenta", date, "failed", 0)
+            stats = update_stats(stats, source, date, "failed", 0)
         else:
-            write_partitioned(df, source="lenta")
-            stats = update_stats(stats, "lenta", date, "success", len(df))
+            write_partitioned(df, source=source)
+            stats = update_stats(stats, source, date, "success", len(df))
 
             print(f"Сохранено строк: {len(df)}")
 
     except Exception as e:
-        print(f"Ошибка: {e}")
-        stats = update_stats(stats, "lenta", date, "failed", 0)
+        print(f"[{source}] Ошибка: {e}")
+        stats = update_stats(stats, source, date, "failed", 0)
 
     save_stats(stats)
 
@@ -192,7 +196,21 @@ def write_partitioned(df, source="lenta"):
 #     print("rows:", len(df))
 #     print(df.columns)
 
-if __name__ == "__main__":
-    start_date = datetime(2025, 1, 1)
+SOURCES = [
+    ("lenta", get_day_news),
+]
 
-    run_lenta(start_date)
+def run_all(start_date):
+    for source, raw_func in SOURCES:
+        print(f"=== Запуск {source} ===")
+
+        try:
+            run_source(source, raw_func, start_date)
+        except Exception as e:
+            print(f"Критическая ошибка в {source}: {e}")
+
+
+
+if __name__ == "__main__":
+    start_date = datetime(2024, 12, 30)
+    run_all(start_date)
