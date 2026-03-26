@@ -1,5 +1,6 @@
 # Data (news titles and other content)
 newstitles/
+storage/
 
 # Python
 __pycache__/
@@ -20,3 +21,10 @@ venv/
 
 # Jupyter Notebook
 *.ipynb
+
+# Analysis
+analysis.ipynb
+jvenv/
+
+# Test files
+test_*

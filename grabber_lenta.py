@@ -1,83 +1,140 @@
-import requests
-from bs4 import BeautifulSoup
+
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import time
-from tqdm import tqdm
+import os
 
-BASE_URL = "https://lenta.ru"
+from parsers.lenta import get_day_news
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+import hashlib
 
-MAX_PAGES = 20
-PAUSE_BETWEEN_PAGES = 2
+STATS_PATH = "storage/meta/stats.parquet"
 
-import requests
-from bs4 import BeautifulSoup
-import time
+from datetime import date, timedelta
 
-BASE_URL = "https://lenta.ru"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0"
-}
+from datetime import date, timedelta
+
+# run parser for a source and a range of dates
+def run_lenta(start_date):
+    stats = load_stats()
+
+    dates = get_dates_to_load(stats, "lenta", start_date)
+
+    print(f"К загрузке дат: {len(dates)}")
+
+    for d in dates:
+        load_lenta_for_date(d)
+
+# Deterine which dates to load
+def get_dates_to_load(stats, source, start_date):
+    
+    if isinstance(start_date, datetime):
+        start_date = start_date.date()
+
+    today = date.today()
+
+    # даты, которые уже есть
+    existing = stats[stats["source"] == source]
+
+    success_dates = set(existing[existing["status"] == "success"]["date"])
+    failed_dates = set(existing[existing["status"] == "failed"]["date"])
+
+    # полный диапазон
+    dates = []
+    current = start_date
+
+    while current <= today:
+        d_str = current.strftime("%Y-%m-%d")
+
+        if d_str not in success_dates:
+            dates.append(current)
+
+        current += timedelta(days=1)
+
+    # добавляем failed (на всякий случай)
+    #failed_dt = [datetime.strptime(d, "%Y-%m-%d") for d in failed_dates]
+    failed_dt = [datetime.strptime(d, "%Y-%m-%d").date() for d in failed_dates]
+
+    return sorted(set(dates + failed_dt))
+
+# Load statistics about collected data
+def load_stats():
+    if not os.path.exists(STATS_PATH):
+        return pd.DataFrame(columns=["source", "date", "status", "count", "updated_at"])
+
+    return pd.read_parquet(STATS_PATH)
+
+# Save statistics about collected data
+def save_stats(df):
+    df.to_parquet(STATS_PATH, index=False)
+
+# Update statistics about collected data
+def update_stats(stats_df, source, date, status, count):
+    date_str = date.strftime("%Y-%m-%d")
+
+    # удаляем старую запись (если была)
+    stats_df = stats_df[
+        ~((stats_df["source"] == source) & (stats_df["date"] == date_str))
+    ]
+
+    # добавляем новую
+    new_row = pd.DataFrame([{
+        "source": source,
+        "date": date_str,
+        "status": status,
+        "count": count,
+        "updated_at": datetime.now()
+    }])
+
+    stats_df = pd.concat([stats_df, new_row], ignore_index=True)
+
+    return stats_df
+
+def make_id(row):
+    raw = f"{row['title'].strip().lower()}_{row['date']}_lenta"
+    return hashlib.sha1(raw.encode()).hexdigest()
 
 
-def get_day_news(date):
-    news = []
-    page = 1
+def fetch_lenta_for_date(date):
+    news = get_day_news(date)
 
-    while True:
-        if page > MAX_PAGES:
-            print("Достигнут лимит страниц")
-            break
+    df = pd.DataFrame(news)
 
-        if page == 1:
-            url = f"{BASE_URL}/{date.strftime('%Y/%m/%d/')}"
+    if df.empty:
+        return df
+
+    df = df[["date", "title", "url"]]
+
+    # 👉 добавляем id
+    df["id"] = df.apply(make_id, axis=1)
+
+    # 👉 убираем дубли
+    df = df.drop_duplicates(subset="id")
+
+    return df
+
+def load_lenta_for_date(date):
+    stats = load_stats()
+
+    print(f"Загрузка {date.strftime('%Y-%m-%d')}")
+
+    try:
+        df = fetch_lenta_for_date(date)
+
+        if df.empty:
+            print("Нет данных")
+            stats = update_stats(stats, "lenta", date, "failed", 0)
         else:
-            url = f"{BASE_URL}/{date.strftime('%Y/%m/%d/')}" + f"page/{page}/"
+            write_partitioned(df, source="lenta")
+            stats = update_stats(stats, "lenta", date, "success", len(df))
 
-        response = requests.get(url, headers=HEADERS)
+            print(f"Сохранено строк: {len(df)}")
 
-        if response.status_code != 200:
-            print(f"Ошибка {response.status_code} на {url}")
-            break
+    except Exception as e:
+        print(f"Ошибка: {e}")
+        stats = update_stats(stats, "lenta", date, "failed", 0)
 
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        items = soup.find_all("a", class_="card-full-news")
-
-        # 🔴 КЛЮЧЕВАЯ ПРОВЕРКА
-        if not items:
-            break
-
-        for item in items:
-            # title = item.text.strip()
-            title_tag = item.find("h3", class_="card-full-news__title")
-            title = title_tag.get_text(strip=True) if title_tag else None
-
-            if not title:
-                print("Пустой title:", item)
-
-            link = item.get("href")
-
-            if link and link.startswith("/"):
-                link = BASE_URL + link
-
-            news.append({
-                "date": date.strftime("%Y-%m-%d"),
-                "title": title,
-                "url": link
-            })
-
-        print(f"  страница {page}: {len(items)} новостей")
-
-        page += 1
-        time.sleep(2)
-
-    return news
-
+    save_stats(stats)
 
 def collect_period(start_date, end_date):
     """
@@ -101,16 +158,41 @@ def collect_period(start_date, end_date):
 
     return pd.DataFrame(all_news)
 
+def write_partitioned(df, source="lenta"):
+    df = df.copy()
+    df["source"] = source
+
+    df.to_parquet(
+        "storage/data",
+        engine="pyarrow",
+        partition_cols=["source", "date"],
+        index=False
+    )
+
+# if __name__ == "__main__":
+#     start = datetime(2026, 3, 1)
+#     end = datetime(2026, 3, 3)
+
+#     df = collect_period(start, end)
+
+#     df.drop_duplicates(subset="url", inplace=True)
+
+#     df.to_csv("newstitles/lenta_news.csv", index=False, encoding="utf-8-sig")
+#     # df.to_parquet("newstitles/lenta.parquet", index=False)
+#     write_partitioned(df)
+
+#     print("Готово:", len(df))
+
+# if __name__ == "__main__":
+#     test_date = datetime(2026, 3, 1)
+
+#     df = fetch_lenta_for_date(test_date)
+
+#     print(df.head())
+#     print("rows:", len(df))
+#     print(df.columns)
 
 if __name__ == "__main__":
-    start = datetime(2026, 1, 1)
-    end = datetime(2026, 3, 20)
+    start_date = datetime(2025, 1, 1)
 
-    df = collect_period(start, end)
-
-    df.drop_duplicates(subset="url", inplace=True)
-
-    df.to_csv("newstitles/lenta_news.csv", index=False, encoding="utf-8-sig")
-    df.to_parquet("newstitles/lenta.parquet", index=False)
-
-    print("Готово:", len(df))
+    run_lenta(start_date)
