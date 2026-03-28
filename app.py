@@ -1,29 +1,57 @@
 import streamlit as st
 import pandas as pd
+import duckdb
+from pathlib import Path
+import altair as alt
+
+# -----------------------
+# Конфиг
+# -----------------------
+DATA_PATH = "storage/data"
+
+st.set_page_config(layout="wide")
+
+# -----------------------
+# Автоопределение источников
+# -----------------------
+@st.cache_data(ttl=60)
+def get_available_sources():
+    base_path = Path(DATA_PATH)
+    sources = []
+
+    for p in base_path.glob("source=*"):
+        source_name = p.name.split("=")[1]
+        sources.append(source_name)
+
+    return sorted(sources)
+
 
 # -----------------------
 # Загрузка данных
 # -----------------------
-import duckdb
-
-@st.cache_data
-def load_data(start_date, end_date, keyword):
+@st.cache_data(ttl=300)
+def load_data(start_date, end_date, keyword, sources):
     query = f"""
     SELECT *,
-       CAST(date AS DATE) as date
+           CAST(date AS DATE) as date,
+           source
     FROM read_parquet(
-        'storage/data/source=lenta/date=*/**.parquet',
+        '{DATA_PATH}/source=*/date=*/**.parquet',
+        hive_partitioning=1,
         union_by_name=True
     )
     WHERE CAST(date AS DATE) BETWEEN '{start_date}' AND '{end_date}'
     """
 
+    if sources:
+        sources_str = ",".join([f"'{s}'" for s in sources])
+        query += f" AND source IN ({sources_str})"
+
     if keyword:
-        query += f"""
-        AND lower(title) LIKE '%{keyword.lower()}%'
-        """
+        query += f" AND lower(title) LIKE '%{keyword.lower()}%'"
 
     return duckdb.query(query).df()
+
 
 # -----------------------
 # UI — заголовок
@@ -31,13 +59,28 @@ def load_data(start_date, end_date, keyword):
 st.title("News Trends Dashboard")
 
 # -----------------------
+# Источники (динамически)
+# -----------------------
+available_sources = get_available_sources()
+
+if not available_sources:
+    st.error("Не найдено ни одного источника в storage/data")
+    st.stop()
+
+sources = st.multiselect(
+    "Источник",
+    options=available_sources,
+    default=available_sources
+)
+
+# -----------------------
 # Выбор даты
 # -----------------------
-min_date = pd.to_datetime("2024-01-01")
+min_date = pd.to_datetime("2025-01-01")
 max_date = pd.to_datetime("today")
 
 date_range = st.date_input(
-    "Выбери диапазон дат",
+    "Диапазон дат",
     value=(min_date, max_date)
 )
 
@@ -49,64 +92,66 @@ start_date, end_date = date_range
 keyword = st.text_input("Ключевое слово")
 
 # -----------------------
+# Кнопка обновления
+# -----------------------
+if st.button("🔄 Обновить данные"):
+    st.cache_data.clear()
+    st.experimental_rerun()
+
+# -----------------------
 # Загрузка данных
 # -----------------------
-df = load_data(start_date, end_date, keyword)
+df = load_data(start_date, end_date, keyword, sources)
 
 if df.empty:
     st.warning("Нет данных")
     st.stop()
 
 # -----------------------
-# График частоты
+# Фильтр keyword (для графика)
 # -----------------------
-st.subheader("Частота упоминаний")
-
-df_filtered = df
-
 if keyword:
-    df_filtered["match"] = df_filtered["title"].str.contains(keyword, case=False, na=False)
+    df["match"] = df["title"].str.contains(keyword, case=False, na=False)
 else:
-    df_filtered["match"] = True
+    df["match"] = True
 
-# график по дням
-# freq = (
-#     df_filtered
-#     .groupby(df_filtered["date"].dt.date)["match"]
-#     .sum()
-#     .reset_index()
-# )
-# freq.columns = ["date", "count"]
-
-# график по неделям
-freq = (
-    df_filtered
-    .assign(
-        iso_year=df_filtered["date"].dt.isocalendar().year,
-        iso_week=df_filtered["date"].dt.isocalendar().week
-    )
-    .groupby(["iso_year", "iso_week"])["match"]
+# -----------------------
+# Агрегация (stacked)
+# -----------------------
+agg = (
+    df.groupby([df["date"].dt.date, "source"])["match"]
     .sum()
     .reset_index()
 )
 
-# делаем удобную дату (понедельник недели)
-freq["date"] = pd.to_datetime(
-    freq["iso_year"].astype(str) + "-W" + freq["iso_week"].astype(str) + "-1",
-    format="%G-W%V-%u"
+agg.columns = ["date", "source", "count"]
+
+# -----------------------
+# График (stacked bar)
+# -----------------------
+st.subheader("Частота упоминаний (по источникам)")
+
+selection = alt.selection_multi(fields=["source"], bind="legend")
+
+chart = alt.Chart(agg).mark_bar().encode(
+    x=alt.X("date:T", title="Дата"),
+    y=alt.Y("sum(count):Q", title="Количество"),
+    color=alt.Color("source:N", title="Источник"),
+    opacity=alt.condition(selection, alt.value(1), alt.value(0.2))
+).add_params(
+    selection
+).properties(
+    height=400
 )
 
-freq = freq[["date", "match"]]
-freq.columns = ["date", "count"]
-
-
-# st.line_chart(freq.set_index("date"))
-st.bar_chart(freq.set_index("date"))
+st.altair_chart(chart, use_container_width=True)
 
 # -----------------------
 # Таблица новостей
 # -----------------------
+st.subheader("Новости")
+
 st.dataframe(
-    df.sort_values("date", ascending=False)[["date", "title", "url"]],
+    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
     use_container_width=True
 )

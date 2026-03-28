@@ -5,9 +5,12 @@ import time
 import os
 
 from parsers.lenta import get_day_news
+from parsers.gazeta import get_day_news as get_gazeta_news
+
 
 import hashlib
 
+BASE_DOMAIN = "https://www.gazeta.ru"
 STATS_PATH = "storage/meta/stats.parquet"
 PAUSE_BETWEEN_PAGES = 2
 
@@ -89,29 +92,6 @@ def update_stats(stats_df, source, date, status, count):
 
     return stats_df
 
-# moved to core/transform.py
-# def make_id(row):
-#     raw = f"{row['title'].strip().lower()}_{row['date']}_lenta"
-#     return hashlib.sha1(raw.encode()).hexdigest()
-
-# moved to core/transform.py
-# def fetch_lenta_for_date(date):
-#     news = get_day_news(date)
-
-#     df = pd.DataFrame(news)
-
-#     if df.empty:
-#         return df
-
-#     df = df[["date", "title", "url"]]
-
-#     # 👉 добавляем id
-#     df["id"] = df.apply(make_id, axis=1)
-
-#     # 👉 убираем дубли
-#     df = df.drop_duplicates(subset="id")
-
-#     return df
 
 from core.transform import build_dataframe
 from parsers.lenta import get_day_news
@@ -123,7 +103,14 @@ def load_for_date(source, raw_func, date):
 
     try:
         news = raw_func(date)
-        df = build_dataframe(news, source)
+
+        # print(f"[DEBUG] raw news count: {len(news)}")           # debug
+        # if len(news) > 0:                                       # debug
+        #     print("[DEBUG] raw sample:", news[:2])              # debug
+
+        df = build_dataframe(news, source)                      
+
+        # print(f"[DEBUG] df shape: {df.shape}")                  # debug
 
         if df.empty:
             print("Нет данных")
@@ -173,31 +160,10 @@ def write_partitioned(df, source="lenta"):
         index=False
     )
 
-# if __name__ == "__main__":
-#     start = datetime(2026, 3, 1)
-#     end = datetime(2026, 3, 3)
-
-#     df = collect_period(start, end)
-
-#     df.drop_duplicates(subset="url", inplace=True)
-
-#     df.to_csv("newstitles/lenta_news.csv", index=False, encoding="utf-8-sig")
-#     # df.to_parquet("newstitles/lenta.parquet", index=False)
-#     write_partitioned(df)
-
-#     print("Готово:", len(df))
-
-# if __name__ == "__main__":
-#     test_date = datetime(2026, 3, 1)
-
-#     df = fetch_lenta_for_date(test_date)
-
-#     print(df.head())
-#     print("rows:", len(df))
-#     print(df.columns)
 
 SOURCES = [
     ("lenta", get_day_news),
+    ("gazeta", get_gazeta_news),
 ]
 
 def run_all(start_date):
@@ -212,5 +178,5 @@ def run_all(start_date):
 
 
 if __name__ == "__main__":
-    start_date = datetime(2024, 12, 30)
+    start_date = datetime(2025, 1, 1)
     run_all(start_date)

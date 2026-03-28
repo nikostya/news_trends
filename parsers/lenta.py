@@ -70,6 +70,6 @@ def get_day_news(date):
         print(f"  страница {page}: {len(items)} новостей")
 
         page += 1
-        time.sleep(2)
+        time.sleep(1.1)
 
     return news
