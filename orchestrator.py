@@ -178,5 +178,5 @@ def run_all(start_date):
 
 
 if __name__ == "__main__":
-    start_date = datetime(2025, 1, 1)
+    start_date = datetime(2024, 1, 1)
     run_all(start_date)

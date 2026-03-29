@@ -11,6 +11,19 @@ DATA_PATH = "storage/data"
 
 st.set_page_config(layout="wide")
 
+
+# генерация дат
+def generate_date_paths(start_date, end_date):
+    dates = []
+    current = pd.to_datetime(start_date)
+
+    while current <= pd.to_datetime(end_date):
+        dates.append(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+
+    return dates
+
+
 # -----------------------
 # Автоопределение источников
 # -----------------------
@@ -25,33 +38,56 @@ def get_available_sources():
 
     return sorted(sources)
 
+from datetime import timedelta
 
 # -----------------------
 # Загрузка данных
 # -----------------------
+from pathlib import Path
+
 @st.cache_data(ttl=300)
 def load_data(start_date, end_date, keyword, sources):
+    dates = generate_date_paths(start_date, end_date)
+
+    paths = []
+
+    for d in dates:
+        path = Path(f"{DATA_PATH}/source=*/date={d}")
+
+        # проверяем, есть ли хоть одна папка с таким date
+        matches = list(Path(DATA_PATH).glob(f"source=*/date={d}"))
+
+        if matches:
+            paths.append(f"{DATA_PATH}/source=*/date={d}/**.parquet")
+
+    # ❗ если вообще нет данных
+    if not paths:
+        return pd.DataFrame()
+
+    paths_str = ", ".join([f"'{p}'" for p in paths])
+
     query = f"""
-    SELECT *,
-           CAST(date AS DATE) as date,
-           source
+    SELECT date, source, title
     FROM read_parquet(
-        '{DATA_PATH}/source=*/date=*/**.parquet',
-        hive_partitioning=1,
-        union_by_name=True
+        [{paths_str}],
+        hive_partitioning=1        
     )
-    WHERE CAST(date AS DATE) BETWEEN '{start_date}' AND '{end_date}'
     """
 
+    # фильтр по источникам
     if sources:
         sources_str = ",".join([f"'{s}'" for s in sources])
-        query += f" AND source IN ({sources_str})"
+        query += f" WHERE source IN ({sources_str})"
 
+    # фильтр по keyword
     if keyword:
-        query += f" AND lower(title) LIKE '%{keyword.lower()}%'"
+        condition = f"lower(title) LIKE '%{keyword.lower()}%'"
+        if "WHERE" in query:
+            query += f" AND {condition}"
+        else:
+            query += f" WHERE {condition}"
 
     return duckdb.query(query).df()
-
 
 # -----------------------
 # UI — заголовок
@@ -77,7 +113,8 @@ sources = st.multiselect(
 # Выбор даты
 # -----------------------
 min_date = pd.to_datetime("2025-01-01")
-max_date = pd.to_datetime("today")
+#max_date = pd.to_datetime("today")
+max_date = pd.to_datetime("2026-03-26")
 
 date_range = st.date_input(
     "Диапазон дат",
@@ -96,7 +133,7 @@ keyword = st.text_input("Ключевое слово")
 # -----------------------
 if st.button("🔄 Обновить данные"):
     st.cache_data.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 # -----------------------
 # Загрузка данных
@@ -131,7 +168,8 @@ agg.columns = ["date", "source", "count"]
 # -----------------------
 st.subheader("Частота упоминаний (по источникам)")
 
-selection = alt.selection_multi(fields=["source"], bind="legend")
+#selection = alt.selection_multi(fields=["source"], bind="legend")
+selection = alt.selection_point(fields=["source"], bind="legend")
 
 chart = alt.Chart(agg).mark_bar().encode(
     x=alt.X("date:T", title="Дата"),
@@ -144,14 +182,16 @@ chart = alt.Chart(agg).mark_bar().encode(
     height=400
 )
 
-st.altair_chart(chart, use_container_width=True)
+st.altair_chart(chart, width="stretch")
+#st.altair_chart(chart, use_container_width=True)
+
 
 # -----------------------
 # Таблица новостей
 # -----------------------
-st.subheader("Новости")
+# st.subheader("Новости")
 
-st.dataframe(
-    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
-    use_container_width=True
-)
+#st.dataframe(
+#    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
+#    use_container_width=True
+#)
