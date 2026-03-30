@@ -5,14 +5,14 @@ from pathlib import Path
 import altair as alt
 
 # -----------------------
-# Конфиг
+# Config
 # -----------------------
 DATA_PATH = "storage/data"
 
 st.set_page_config(layout="wide")
 
 
-# генерация дат
+# date generations
 def generate_date_paths(start_date, end_date):
     dates = []
     current = pd.to_datetime(start_date)
@@ -25,7 +25,7 @@ def generate_date_paths(start_date, end_date):
 
 
 # -----------------------
-# Автоопределение источников
+# Sources autodetection
 # -----------------------
 @st.cache_data(ttl=3600)
 def get_available_sources():
@@ -41,7 +41,7 @@ def get_available_sources():
 from datetime import timedelta
 
 # -----------------------
-# Загрузка данных
+# Data load
 # -----------------------
 from pathlib import Path
 
@@ -53,14 +53,14 @@ def load_data(start_date, end_date, keyword, sources):
 
     for d in dates:
         path = Path(f"{DATA_PATH}/source=*/date={d}")
-
-        # проверяем, есть ли хоть одна папка с таким date
+        
+        # check if any folders with that date exists
         matches = list(Path(DATA_PATH).glob(f"source=*/date={d}"))
 
         if matches:
             paths.append(f"{DATA_PATH}/source=*/date={d}/**.parquet")
 
-    # ❗ если вообще нет данных
+    # ❗ if no any data
     if not paths:
         return pd.DataFrame()
 
@@ -74,12 +74,12 @@ def load_data(start_date, end_date, keyword, sources):
     )
     """
 
-    # фильтр по источникам
+    # sources filter
     if sources:
         sources_str = ",".join([f"'{s}'" for s in sources])
         query += f" WHERE source IN ({sources_str})"
 
-    # фильтр по keyword
+    # keyword filter
     if keyword:
         condition = f"lower(title) LIKE '%{keyword.lower()}%'"
         if "WHERE" in query:
@@ -90,27 +90,22 @@ def load_data(start_date, end_date, keyword, sources):
     return duckdb.query(query).df()
 
 # -----------------------
-# UI — заголовок
+# UI — title
 # -----------------------
 st.title("News Trends Dashboard")
 
 # -----------------------
-# Источники (динамически)
+# Sources (dinamics)
 # -----------------------
 available_sources = get_available_sources()
 
 if not available_sources:
-    st.error("Не найдено ни одного источника в storage/data")
+    st.error("Sources not found in storage/data")
     st.stop()
 
-# sources = st.multiselect(
-#     "Источник",
-#     options=available_sources,
-#     default=available_sources
-# )
 
 # -----------------------
-# Выбор даты
+# Date range
 # -----------------------
 min_date = pd.to_datetime("2024-01-01")
 max_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
@@ -123,56 +118,34 @@ max_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
 
 with st.form("filters_form"):
     sources = st.multiselect(
-        "Источник",
+        "Sources:",
         options=available_sources,
         default=available_sources
     )
 
     date_range = st.date_input(
-        "Диапазон дат",
+        "Date range:",
         value=(min_date, max_date)
     )
 
-    keyword = st.text_input("Ключевое слово")
+    keyword = st.text_input("Key word:")
 
-    submitted = st.form_submit_button("🔍 Применить фильтры")
+    submitted = st.form_submit_button("🔍 Apply filters")
 
-
-
-
-
-
-
-# date_range = st.date_input(
-#     "Диапазон дат",
-#     value=(min_date, max_date)
-# )
 
 start_date, end_date = date_range
 
 # -----------------------
-# Поиск
-# -----------------------
-# keyword = st.text_input("Ключевое слово")
-
-# -----------------------
-# Кнопка обновления
-# -----------------------
-# if st.button("🔄 Обновить данные"):
-#     st.cache_data.clear()
-#     st.rerun()
-
-# -----------------------
-# Загрузка данных
+# Data load
 # -----------------------
 df = load_data(start_date, end_date, keyword, sources)
 
 if df.empty:
-    st.warning("Нет данных")
+    st.warning("No data")
     st.stop()
 
 # -----------------------
-# Фильтр keyword (для графика)
+# keyword filer (for plot)
 # -----------------------
 if keyword:
     df["match"] = df["title"].str.contains(keyword, case=False, na=False)
@@ -180,29 +153,54 @@ else:
     df["match"] = True
 
 # -----------------------
-# Агрегация (stacked)
+# Aggregation level selector
 # -----------------------
-agg = (
-    df.groupby([df["date"].dt.date, "source"])["match"]
-    .sum()
-    .reset_index()
+period = st.radio(
+    "Aggregation period",
+    ["Day", "Month"],
+    horizontal=True
 )
+
+# -----------------------
+# Aggregation
+# -----------------------
+if period == "Day":
+    agg = (
+        df.groupby([df["date"].dt.date, "source"])["match"]
+        .sum()
+        .reset_index()
+    )
+    x_title = "Date"
+    x_format = "%d %b"
+
+else:  # Month
+    agg = (
+        df.groupby(
+            [df["date"].dt.to_period("M").dt.to_timestamp(), "source"]
+        )["match"]
+        .sum()
+        .reset_index()
+    )
+    x_title = "Month"
+    x_format = "%b %Y"
 
 agg.columns = ["date", "source", "count"]
 
 # -----------------------
-# График (stacked bar)
+# Plot
 # -----------------------
-st.subheader("Частота упоминаний (по источникам)")
+st.subheader(f"Frequency of mentions (by {period.lower()})")
 
-#selection = alt.selection_multi(fields=["source"], bind="legend")
 selection = alt.selection_point(fields=["source"], bind="legend")
 
 chart = alt.Chart(agg).mark_bar().encode(
-    x=alt.X("date:T", title="Дата"),
-    # y=alt.Y("sum(count):Q", title="Количество", scale=alt.Scale(domain=[0, 150], clamp=True)),
-    y=alt.Y("sum(count):Q", title="Количество"),
-    color=alt.Color("source:N", title="Источник"),
+    x=alt.X(
+        "date:T",
+        title=x_title,
+        axis=alt.Axis(format=x_format)
+    ),
+    y=alt.Y("sum(count):Q", title="Count"),
+    color=alt.Color("source:N", title="Source"),
     opacity=alt.condition(selection, alt.value(1), alt.value(0.2))
 ).add_params(
     selection
@@ -211,13 +209,11 @@ chart = alt.Chart(agg).mark_bar().encode(
 )
 
 st.altair_chart(chart, width="stretch")
-#st.altair_chart(chart, use_container_width=True)
-
 
 # -----------------------
-# Таблица новостей
+# News table
 # -----------------------
-# st.subheader("Новости")
+# st.subheader("News")
 
 # st.dataframe(
 #    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
