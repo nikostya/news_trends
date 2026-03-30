@@ -45,7 +45,7 @@ def get_dates_to_load(stats, source, start_date):
     dates = []
     current = start_date
 
-    while current <= today:
+    while current <= (today-timedelta(days=1)):
         d_str = current.strftime("%Y-%m-%d")
 
         if d_str not in success_dates:

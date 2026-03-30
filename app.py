@@ -27,7 +27,7 @@ def generate_date_paths(start_date, end_date):
 # -----------------------
 # Автоопределение источников
 # -----------------------
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=3600)
 def get_available_sources():
     base_path = Path(DATA_PATH)
     sources = []
@@ -45,7 +45,7 @@ from datetime import timedelta
 # -----------------------
 from pathlib import Path
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def load_data(start_date, end_date, keyword, sources):
     dates = generate_date_paths(start_date, end_date)
 
@@ -103,37 +103,64 @@ if not available_sources:
     st.error("Не найдено ни одного источника в storage/data")
     st.stop()
 
-sources = st.multiselect(
-    "Источник",
-    options=available_sources,
-    default=available_sources
-)
+# sources = st.multiselect(
+#     "Источник",
+#     options=available_sources,
+#     default=available_sources
+# )
 
 # -----------------------
 # Выбор даты
 # -----------------------
-min_date = pd.to_datetime("2025-01-01")
-#max_date = pd.to_datetime("today")
-max_date = pd.to_datetime("2026-03-26")
+min_date = pd.to_datetime("2024-01-01")
+max_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
+# max_date = pd.to_datetime("2026-03-26")
 
-date_range = st.date_input(
-    "Диапазон дат",
-    value=(min_date, max_date)
-)
+
+# -----------------------------
+# all filters in one form
+# -----------------------------
+
+with st.form("filters_form"):
+    sources = st.multiselect(
+        "Источник",
+        options=available_sources,
+        default=available_sources
+    )
+
+    date_range = st.date_input(
+        "Диапазон дат",
+        value=(min_date, max_date)
+    )
+
+    keyword = st.text_input("Ключевое слово")
+
+    submitted = st.form_submit_button("🔍 Применить фильтры")
+
+
+
+
+
+
+
+# date_range = st.date_input(
+#     "Диапазон дат",
+#     value=(min_date, max_date)
+# )
 
 start_date, end_date = date_range
 
 # -----------------------
 # Поиск
 # -----------------------
-keyword = st.text_input("Ключевое слово")
+# keyword = st.text_input("Ключевое слово")
 
 # -----------------------
 # Кнопка обновления
 # -----------------------
-if st.button("🔄 Обновить данные"):
-    st.cache_data.clear()
-    st.rerun()
+# if st.button("🔄 Обновить данные"):
+#     st.cache_data.clear()
+#     st.rerun()
 
 # -----------------------
 # Загрузка данных
@@ -173,6 +200,7 @@ selection = alt.selection_point(fields=["source"], bind="legend")
 
 chart = alt.Chart(agg).mark_bar().encode(
     x=alt.X("date:T", title="Дата"),
+    # y=alt.Y("sum(count):Q", title="Количество", scale=alt.Scale(domain=[0, 150], clamp=True)),
     y=alt.Y("sum(count):Q", title="Количество"),
     color=alt.Color("source:N", title="Источник"),
     opacity=alt.condition(selection, alt.value(1), alt.value(0.2))
@@ -191,7 +219,7 @@ st.altair_chart(chart, width="stretch")
 # -----------------------
 # st.subheader("Новости")
 
-#st.dataframe(
+# st.dataframe(
 #    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
 #    use_container_width=True
-#)
+# )
