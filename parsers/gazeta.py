@@ -21,7 +21,7 @@ NEWS_URL_PATTERN = re.compile(
 def build_url(date_str: str, page: int) -> str:
     return (
         f"{BASE_URL}"
-        f"?p=main"
+        f"?p=default"
         f"&page={page}"
         f"&text=%D0%BD%D0%B0"
         f"&input=utf8"

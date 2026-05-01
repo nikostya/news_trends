@@ -23,6 +23,7 @@ venv/
 *.ipynb
 
 # Analysis
+Analysis/
 analysis.ipynb
 jvenv/
 

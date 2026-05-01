@@ -215,7 +215,7 @@ st.altair_chart(chart, width="stretch")
 # -----------------------
 # st.subheader("News")
 
-# st.dataframe(
-#    df.sort_values("date", ascending=False)[["date", "source", "title", "url"]],
-#    use_container_width=True
-# )
+#st.dataframe(
+#   df.sort_values("date", ascending=False)[["date", "source", "title"]],
+#   use_container_width=True
+#)
